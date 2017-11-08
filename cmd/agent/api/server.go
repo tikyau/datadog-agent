@@ -21,6 +21,7 @@ import (
 
 	"github.com/DataDog/datadog-agent/cmd/agent/api/agent"
 	"github.com/DataDog/datadog-agent/cmd/agent/api/check"
+	"github.com/DataDog/datadog-agent/cmd/agent/api/tagger"
 	"github.com/DataDog/datadog-agent/pkg/api/security"
 	"github.com/DataDog/datadog-agent/pkg/api/util"
 	"github.com/DataDog/datadog-agent/pkg/config"
@@ -39,6 +40,7 @@ func StartServer() error {
 	// IPC REST API server
 	agent.SetupHandlers(r.PathPrefix("/agent").Subrouter())
 	check.SetupHandlers(r.PathPrefix("/check").Subrouter())
+	tagger.SetupHandlers(r.PathPrefix("/tags").Subrouter())
 
 	// get the transport we're going to use under HTTP
 	var err error
