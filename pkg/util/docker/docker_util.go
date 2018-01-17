@@ -241,7 +241,7 @@ func (d *dockerUtil) containers(cfg *ContainerListConfig) ([]*Container, error) 
 		var cgByContainer map[string]*ContainerCgroup
 		var err error
 
-		cgByContainer, err = ScrapeAllCgroups()
+		cgByContainer, err = ScrapeAllCgroups(false)
 		if err != nil {
 			return nil, fmt.Errorf("could not get cgroups: %s", err)
 		}
