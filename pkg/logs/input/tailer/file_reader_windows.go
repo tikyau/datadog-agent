@@ -39,6 +39,7 @@ func (t *Tailer) readForever() {
 		if err != nil {
 			t.source.Tracker.TrackError(err)
 			log.Error("Err: ", err)
+			t.onStop()
 			return
 		}
 		if n == 0 {
@@ -69,6 +70,9 @@ func (t *Tailer) readWhenNeeded() {
 			f.Seek(t.GetReadOffset(), os.SEEK_SET)
 			t.file = f
 			go t.readForever()
+		} else {
+			f.Close()
+			continue
 		}
 	}
 }
