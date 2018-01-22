@@ -6,6 +6,8 @@
 package logs
 
 import (
+	log "github.com/cihub/seelog"
+
 	"github.com/DataDog/datadog-agent/pkg/logs/auditor"
 	"github.com/DataDog/datadog-agent/pkg/logs/config"
 	"github.com/DataDog/datadog-agent/pkg/logs/input/container"
@@ -17,8 +19,15 @@ import (
 	"github.com/DataDog/datadog-agent/pkg/logs/status"
 )
 
-// isRunning indicates whether logs-agent is running or not
-var isRunning bool
+var (
+	// isRunning indicates whether logs-agent is running or not
+	isRunning bool
+
+	// logs sources
+	filesScanner      *tailer.Scanner
+	containersScanner *container.Scanner
+	networkListeners  *listener.Listeners
+)
 
 // Start starts logs-agent
 func Start() error {
@@ -34,33 +43,45 @@ func Start() error {
 func run() {
 	isRunning = true
 
-	cm := sender.NewConnectionManager(
+	connectionManager := sender.NewConnectionManager(
 		config.LogsAgent.GetString("log_dd_url"),
 		config.LogsAgent.GetInt("log_dd_port"),
 		config.LogsAgent.GetBool("dev_mode_no_ssl"),
 	)
 
-	auditorChan := make(chan message.Message, config.ChanSizes)
-	a := auditor.New(auditorChan)
-	a.Start()
+	messageChan := make(chan message.Message, config.ChanSizes)
+	auditor := auditor.New(messageChan)
+	auditor.Start()
 
-	pp := pipeline.NewProvider()
-	pp.Start(cm, auditorChan)
+	pipelineProvider := pipeline.NewProvider()
+	pipelineProvider.Start(connectionManager, messageChan)
 
 	sources := config.GetLogsSources()
 
-	l := listener.New(sources.GetValidSources(), pp)
-	l.Start()
+	networkListeners = listener.New(sources.GetValidSources(), pipelineProvider)
+	networkListeners.Start()
 
 	tailingLimit := config.LogsAgent.GetInt("log_open_files_limit")
-	s := tailer.New(sources.GetValidSources(), tailingLimit, pp, a, tailer.DefaultSleepDuration)
-	s.Start()
+	filesScanner = tailer.New(sources.GetValidSources(), tailingLimit, pipelineProvider, auditor, tailer.DefaultSleepDuration)
+	filesScanner.Start()
 
-	c := container.New(sources.GetValidSources(), pp, a)
-	c.Start()
+	containersScanner = container.New(sources.GetValidSources(), pipelineProvider, auditor)
+	containersScanner.Start()
 
 	status.Initialize(sources.GetSources())
+}
 
+// Stop stops properly the logs-agent to prevent data loss
+// All Stop methods are blocking which means that Stop only returns
+// when the whole pipeline is flushed
+func Stop() {
+	log.Info("Stopping logs-agent")
+	if isRunning {
+		// stop all input components, i.e. the  two first stages of the pipeline
+		filesScanner.Stop()
+		networkListeners.Stop()
+		containersScanner.Stop()
+	}
 }
 
 // GetStatus returns logs-agent status
