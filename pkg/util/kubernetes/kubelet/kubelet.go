@@ -19,6 +19,7 @@ import (
 	log "github.com/cihub/seelog"
 
 	"github.com/DataDog/datadog-agent/pkg/config"
+	"github.com/DataDog/datadog-agent/pkg/util/cache"
 	"github.com/DataDog/datadog-agent/pkg/util/docker"
 	"github.com/DataDog/datadog-agent/pkg/util/kubernetes"
 	"github.com/DataDog/datadog-agent/pkg/util/retry"
@@ -27,6 +28,7 @@ import (
 // Kubelet constants
 const (
 	KubeletHealthPath = "/healthz"
+	PodListCacheKey   = "KubeletPodListCacheKey"
 )
 
 var globalKubeUtil *KubeUtil
@@ -86,18 +88,29 @@ func (ku *KubeUtil) GetNodeInfo() (ip, name string, err error) {
 
 // GetLocalPodList returns the list of pods running on the node where this pod is running
 func (ku *KubeUtil) GetLocalPodList() ([]*Pod, error) {
+	var pods PodList
+	var ok bool
 
-	data, err := PerformKubeletQuery(fmt.Sprintf("%s/pods", ku.kubeletAPIURL))
-	if err != nil {
-		return nil, fmt.Errorf("Error performing kubelet query: %s", err)
+	if cached, hit := cache.Cache.Get(PodListCacheKey); hit {
+		pods, ok = cached.(PodList)
+		if !ok {
+			log.Errorf("Invalid cache format, forcing a cache miss")
+		}
+	} else {
+		data, err := PerformKubeletQuery(fmt.Sprintf("%s/pods", ku.kubeletAPIURL))
+		if err != nil {
+			return nil, fmt.Errorf("error performing kubelet query: %s", err)
+		}
+
+		if err := json.Unmarshal(data, &pods); err != nil {
+			return nil, fmt.Errorf("error unmarshalling json: %s", err)
+		}
+
+		// cache the inspect for 10 seconds to reduce pressure on the daemon
+		cache.Cache.Set(PodListCacheKey, pods, 10*time.Second)
 	}
 
-	v := new(PodList)
-	if err := json.Unmarshal(data, v); err != nil {
-		return nil, fmt.Errorf("Error unmarshalling json: %s", err)
-	}
-
-	return v.Items, nil
+	return pods.Items, nil
 }
 
 // GetPodForContainerID fetches the podlist and returns the pod running
