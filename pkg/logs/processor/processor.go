@@ -21,6 +21,7 @@ type Processor struct {
 	inputChan  chan message.Message
 	outputChan chan message.Message
 	apiKey     []byte
+	isFlushed  chan struct{}
 }
 
 // New returns an initialized Processor
@@ -32,12 +33,19 @@ func New(inputChan, outputChan chan message.Message, apiKey, logset string) *Pro
 		inputChan:  inputChan,
 		outputChan: outputChan,
 		apiKey:     []byte(apiKey),
+		isFlushed:  make(chan struct{}),
 	}
 }
 
 // Start starts the Processor
 func (p *Processor) Start() {
 	go p.run()
+}
+
+// Stop stops the Processor
+func (p *Processor) Stop() {
+	close(p.inputChan)
+	<-p.isFlushed
 }
 
 // run starts the processing of the inputChan
@@ -52,6 +60,7 @@ func (p *Processor) run() {
 			p.outputChan <- msg
 		}
 	}
+	p.isFlushed <- struct{}{}
 }
 
 // computeExtraContent returns additional content to add to a log line.
