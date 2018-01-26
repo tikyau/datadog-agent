@@ -27,6 +27,9 @@ var (
 	filesScanner      *tailer.Scanner
 	containersScanner *container.Scanner
 	networkListeners  *listener.Listeners
+
+	// pipeline provider
+	pipelineProvider pipeline.Provider
 )
 
 // Start starts logs-agent
@@ -49,11 +52,11 @@ func run() {
 		config.LogsAgent.GetBool("dev_mode_no_ssl"),
 	)
 
-	messageChan := make(chan message.Message, config.ChanSizes)
+	messageChan := make(chan message.Message, config.ChanSize)
 	auditor := auditor.New(messageChan)
 	auditor.Start()
 
-	pipelineProvider := pipeline.NewProvider()
+	pipelineProvider = pipeline.NewProvider()
 	pipelineProvider.Start(connectionManager, messageChan)
 
 	sources := config.GetLogsSources()
@@ -81,6 +84,11 @@ func Stop() {
 		filesScanner.Stop()
 		networkListeners.Stop()
 		containersScanner.Stop()
+
+		// stop all the different pipelines
+		pipelineProvider.Stop()
+
+		// auditor.Stop()
 	}
 }
 
