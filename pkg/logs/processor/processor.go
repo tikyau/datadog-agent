@@ -7,12 +7,15 @@ package processor
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/DataDog/datadog-agent/pkg/util"
+	log "github.com/cihub/seelog"
+	"strings"
 
 	"github.com/DataDog/datadog-agent/pkg/logs/config"
 	"github.com/DataDog/datadog-agent/pkg/logs/message"
+	"github.com/DataDog/datadog-agent/pkg/logs/pb"
+	"github.com/golang/protobuf/proto"
 )
 
 // A Processor updates messages from an inputChan and pushes
@@ -52,92 +55,74 @@ func (p *Processor) run() {
 	for msg := range p.inputChan {
 		shouldProcess, redactedMessage := p.applyRedactingRules(msg)
 		if shouldProcess {
-			extraContent := p.computeExtraContent(msg)
-			apikeyString := p.computeAPIKeyString(msg)
-			payload := p.buildPayload(apikeyString, redactedMessage, extraContent)
-			msg.SetContent(payload)
-			p.outputChan <- msg
+			content, err := p.computeContent(msg, redactedMessage)
+			if err == nil {
+				msg.SetContent(content)
+				p.outputChan <- msg
+			} else {
+				log.Error("unable to serialize msg", err)
+			}
 		}
 	}
 }
 
-// computeExtraContent returns additional content to add to a log line.
-// For instance, we want to add the timestamp, hostname and a log level
-// to messages coming from a file
-func (p *Processor) computeExtraContent(msg message.Message) []byte {
-	// if the first char is '<', we can assume it's already formatted as RFC5424, thus skip this step
-	// (for instance, using tcp forwarding. We don't want to override the hostname & co)
-	if len(msg.Content()) > 0 && msg.Content()[0] != '<' {
-		// fit RFC5424
-		// <%pri%>%protocol-version% %timestamp:::date-rfc3339% %HOSTNAME% %$!new-appname% - - - %msg%\n
-		extraContent := []byte("")
+func (p *Processor) computeContent(msg message.Message, redactedMessage []byte) ([]byte, error) {
 
-		// Severity
-		if msg.GetSeverity() != nil {
-			extraContent = append(extraContent, msg.GetSeverity()...)
-		} else {
-			extraContent = append(extraContent, config.SevInfo...)
-		}
-
-		// Protocol version
-		extraContent = append(extraContent, '0')
-		extraContent = append(extraContent, ' ')
-
-		// Timestamp
-		if msg.GetTimestamp() != "" {
-			extraContent = append(extraContent, []byte(msg.GetTimestamp())...)
-		} else {
-			timestamp := time.Now().UTC().Format(config.DateFormat)
-			extraContent = append(extraContent, []byte(timestamp)...)
-		}
-		extraContent = append(extraContent, ' ')
-
-		// Hostname
-		hostname, err := util.GetHostname()
-		if err != nil {
-			// this scenario is not likely to happen since the agent can not start without a hostname
-			hostname = "unknown"
-		}
-		extraContent = append(extraContent, []byte(hostname)...)
-		extraContent = append(extraContent, ' ')
-
-		// Service
-		service := msg.GetOrigin().LogSource.Config.Service
-		if service != "" {
-			extraContent = append(extraContent, []byte(service)...)
-		} else {
-			extraContent = append(extraContent, '-')
-		}
-
-		// Extra
-		extraContent = append(extraContent, []byte(" - - ")...)
-
-		// Tags
-		extraContent = append(extraContent, msg.GetTagsPayload()...)
-		extraContent = append(extraContent, ' ')
-
-		return extraContent
+	// TODO Remove occurrences of "severity" (it is now "status")
+	// Compute the status
+	var status string
+	if msg.GetSeverity() != nil {
+		status = string(msg.GetSeverity())
+	} else {
+		status = "info"
 	}
-	return nil
-}
 
-func (p *Processor) computeAPIKeyString(msg message.Message) []byte {
-	sourceLogset := msg.GetOrigin().LogSource.Config.Logset
-	if sourceLogset != "" {
-		return []byte(fmt.Sprintf("%s/%s", p.apikey, sourceLogset))
+	// Compute the hostname
+	hostname, err := util.GetHostname()
+	if err != nil {
+		// this scenario is not likely to happen since the agent can not start without a hostname
+		hostname = "unknown"
 	}
-	return p.apikeyString
-}
 
-// buildPayload returns a processed payload from a raw message
-func (p *Processor) buildPayload(apikeyString, redactedMessage, extraContent []byte) []byte {
-	payload := append(apikeyString, ' ')
-	if extraContent != nil {
-		payload = append(payload, extraContent...)
+	// Build the protocol buffer payload
+	payload := &pb.LogPayload{
+		ApiKey: p.apikey,
+		Log: &pb.Log{
+			Message:   string(redactedMessage),
+			Status:    status,
+			Timestamp: msg.GetTimestamp(),
+			Hostname:  hostname,
+			Service:   msg.GetOrigin().LogSource.Config.Service,
+			Source:    msg.GetOrigin().LogSource.Config.Source,
+			Category:  msg.GetOrigin().LogSource.Config.SourceCategory,
+			Tags:      strings.Split(string(msg.GetTagsPayload()), ","),
+		},
 	}
-	payload = append(payload, redactedMessage...)
-	payload = append(payload, '\n')
-	return payload
+
+	// TODO Remove "logset" from configuration files as it is deprecated
+	// Append logset if necessary
+	logset := msg.GetOrigin().LogSource.Config.Logset
+	if logset != "" {
+		payload.Logset = logset
+	}
+
+	// Convert the protocol buffer to a flat byte array
+	body, err := payload.Marshal()
+	if err != nil {
+		return nil, err
+	}
+
+	// We prepend the body length encoded as a base 128 Varint to the array.
+	// (see https://developers.google.com/protocol-buffers/docs/encoding#varints)
+	// For example:
+	// BEFORE ENCODE (300 bytes)       AFTER ENCODE (302 bytes)
+	// +---------------+               +--------+---------------+
+	// | Protobuf Data |-------------->| Length | Protobuf Data |
+	// |  (300 bytes)  |               | 0xAC02 |  (300 bytes)  |
+	// +---------------+               +--------+---------------+
+	content := append(proto.EncodeVarint(uint64(len(body))), body...)
+
+	return content, nil
 }
 
 // applyRedactingRules returns given a message if we should process it or not,
