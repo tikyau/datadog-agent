@@ -39,6 +39,7 @@ before_script:
   # We need to install go deps from within the GOPATH, which we set to / on builder images; that's because pointing
   # GOPATH to the project folder would be too complex (we'd need to replicate the `src/github/project` scheme).
   # So we copy the agent sources to / and bootstrap from there the vendor dependencies before running any job.
+  - mkdir -p $SRC_PATH
   - rsync -azr --delete ./ $SRC_PATH
   - cd $SRC_PATH
   - inv -e deps
