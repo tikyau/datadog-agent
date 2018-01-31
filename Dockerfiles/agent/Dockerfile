@@ -14,6 +14,17 @@ RUN apt-get update \
  && rm tini.asc \
  && chmod +x tini
 
+# Get supervisor
+# FIXME: using a fork's release, get them to make proper released if we go with that
+ADD https://github.com/Rbeuque74/supervisord/releases/download/v0.1.2/supervisord_0.1.2_linux_amd64 supervisord
+RUN echo "ee2dcf7797a8f7a0dad294f5b376d87059521cf5cffe89ec7cb96582a373bef3 supervisord" > sum \
+ && sha256sum -c sum \
+ && chmod +x supervisord \
+ && rm sum
+
+ # Delete python supervisor binaries to avoid confusion
+ RUN rm opt/datadog-agent/embedded/bin/supervisord opt/datadog-agent/embedded/bin/supervisorctl
+
 # Extract and cleanup:
 #   - unused systemd unit
 #   - GPL sources for embedded software  # FIXME: move upstream
@@ -39,7 +50,7 @@ COPY datadog*.yaml etc/datadog-agent/
 RUN mv etc/datadog-agent/conf.d/docker.d/conf.yaml.example etc/datadog-agent/conf.d/docker.d/conf.yaml.default \
  && sed -i "s/enabled: false/enabled: true/" etc/datadog-agent/conf.d/process_agent.yaml.default
 
-COPY entrypoint.sh .
+
 
 
 FROM debian:stretch-slim
@@ -59,6 +70,8 @@ RUN if [ -n "$WITH_JMX" ]; then apt-get update \
 # Copy agent from extract stage
 COPY --from=extract /output/ /
 
+COPY entrypoint.sh supervisord.conf /
+
 # Prepare for running without root
 RUN adduser --group dd-agent \
  && adduser --system --no-create-home --disabled-password --ingroup dd-agent dd-agent \
@@ -77,4 +90,4 @@ HEALTHCHECK --interval=5m --timeout=20s --retries=1 \
   CMD ["/opt/datadog-agent/bin/agent/agent", "status"]
 
 ENTRYPOINT ["/tini", "--", "/entrypoint.sh"]
-CMD ["/opt/datadog-agent/bin/agent/agent", "start"]
+CMD ["/supervisord"]
