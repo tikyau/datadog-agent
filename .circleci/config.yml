@@ -49,7 +49,7 @@ jobs:
           name: grab go deps
           command: invoke deps
       - run:
-          name: remove old cache files (15 days)
+          name: remove old precompiled files (15+ days)
           command: find /go/pkg/ -mtime +15 -type f -exec rm {} \;
       - run:
           name: pre-compile go deps
