@@ -167,7 +167,9 @@ func (lh *MultiLineHandler) handleExpiration() {
 	for range lh.flushTimer.C {
 		lh.mu.Lock()
 		if lh.shouldStop {
-			// don't send content to prevent from sending a truncated message
+			// when we stop, we may be in the middle of processing a multi-line message,
+			// flushing the buffer would lead to send a truncated message,
+			// so let's not flush it and wait for the next restart to process the whole entire message instead
 			lh.mu.Unlock()
 			break
 		}

@@ -8,15 +8,15 @@ package logs
 import (
 	log "github.com/cihub/seelog"
 
-	aud "github.com/DataDog/datadog-agent/pkg/logs/auditor"
+	"github.com/DataDog/datadog-agent/pkg/logs/auditor"
 	"github.com/DataDog/datadog-agent/pkg/logs/config"
-	"github.com/DataDog/datadog-agent/pkg/logs/input"
 	"github.com/DataDog/datadog-agent/pkg/logs/input/container"
 	"github.com/DataDog/datadog-agent/pkg/logs/input/listener"
 	"github.com/DataDog/datadog-agent/pkg/logs/input/tailer"
 	"github.com/DataDog/datadog-agent/pkg/logs/message"
 	"github.com/DataDog/datadog-agent/pkg/logs/pipeline"
 	"github.com/DataDog/datadog-agent/pkg/logs/sender"
+	"github.com/DataDog/datadog-agent/pkg/logs/stages"
 	"github.com/DataDog/datadog-agent/pkg/logs/status"
 )
 
@@ -24,14 +24,8 @@ var (
 	// isRunning indicates whether logs-agent is running or not
 	isRunning bool
 
-	// input components
-	inputs *input.Inputs
-
-	// pipeline provider
-	pipelineProvider pipeline.Provider
-
-	// auditor
-	auditor *aud.Auditor
+	// logs-agent data pipeline
+	agentPipeline stages.Group
 )
 
 // Start starts logs-agent
@@ -55,11 +49,8 @@ func run() {
 	)
 
 	messageChan := make(chan message.Message, config.ChanSize)
-	auditor = aud.New(messageChan)
-	auditor.Start()
-
-	pipelineProvider = pipeline.NewProvider()
-	pipelineProvider.Start(connectionManager, messageChan)
+	auditor := auditor.New(messageChan)
+	pipelineProvider := pipeline.NewProvider(connectionManager, messageChan)
 
 	sources := config.GetLogsSources()
 
@@ -73,12 +64,12 @@ func run() {
 		tailer.DefaultSleepDuration,
 	)
 
-	inputs = input.NewInputs([]input.Input{
-		networkListeners,
-		filesScanner,
-		containersScanner,
-	})
-	inputs.Start()
+	inputs := stages.NewParallelGroup()
+	inputs.Add(filesScanner, containersScanner, networkListeners)
+
+	agentPipeline = stages.NewSerialGroup()
+	agentPipeline.Add(inputs, pipelineProvider, auditor)
+	agentPipeline.Start()
 
 	status.Initialize(sources.GetSources())
 }
@@ -89,14 +80,7 @@ func run() {
 func Stop() {
 	log.Info("Stopping logs-agent")
 	if isRunning {
-		// stop all input components
-		inputs.Stop()
-
-		// stop all the different pipelines
-		pipelineProvider.Stop()
-
-		// stop the auditor
-		auditor.Stop()
+		agentPipeline.Stop()
 	}
 }
 

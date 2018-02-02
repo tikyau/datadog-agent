@@ -16,13 +16,15 @@ import (
 
 // Provider provides message channels
 type Provider interface {
-	Start(cm *sender.ConnectionManager, auditorChan chan message.Message)
+	Start()
 	Stop()
 	NextPipelineChan() chan message.Message
 }
 
 // provider implements providing logic
 type provider struct {
+	connManager          *sender.ConnectionManager
+	outputChan           chan message.Message
 	numberOfPipelines    int
 	chanSize             int
 	pipelines            []*Pipeline
@@ -30,8 +32,10 @@ type provider struct {
 }
 
 // NewProvider returns a new Provider
-func NewProvider() Provider {
+func NewProvider(connManager *sender.ConnectionManager, outputChan chan message.Message) Provider {
 	return &provider{
+		connManager:       connManager,
+		outputChan:        outputChan,
 		numberOfPipelines: config.NumberOfPipelines,
 		chanSize:          config.ChanSize,
 		pipelines:         []*Pipeline{},
@@ -39,9 +43,9 @@ func NewProvider() Provider {
 }
 
 // Start initializes the pipelines
-func (p *provider) Start(connManager *sender.ConnectionManager, outputChan chan message.Message) {
+func (p *provider) Start() {
 	for i := 0; i < p.numberOfPipelines; i++ {
-		pipeline := NewPipeline(p.chanSize, connManager, outputChan)
+		pipeline := NewPipeline(p.chanSize, p.connManager, p.outputChan)
 		pipeline.Start()
 		p.pipelines = append(p.pipelines, pipeline)
 	}

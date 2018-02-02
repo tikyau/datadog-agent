@@ -14,7 +14,7 @@ import (
 	"github.com/DataDog/datadog-agent/pkg/logs/pipeline"
 )
 
-// Listener represents a component that can open and read data from a connections
+// Listener represents a component that can open and read data from a connection
 type Listener interface {
 	Start()
 	Stop()
