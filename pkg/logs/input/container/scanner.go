@@ -10,6 +10,7 @@ package container
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/DataDog/datadog-agent/pkg/tagger"
@@ -20,27 +21,33 @@ import (
 	"github.com/DataDog/datadog-agent/pkg/logs/message"
 	"github.com/DataDog/datadog-agent/pkg/logs/pipeline"
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/versions"
 	"github.com/docker/docker/client"
 )
 
 const scanPeriod = 10 * time.Second
-const dockerAPIVersion = "1.25"
+
+// Supported versions of the Docker API
+const (
+	minVersion = "1.18"
+	maxVersion = "1.25"
+)
 
 // A Scanner listens for stdout and stderr of containers
 type Scanner struct {
 	pp      pipeline.Provider
-	sources []*config.IntegrationConfigLogSource
+	sources []*config.LogSource
 	tailers map[string]*DockerTailer
 	cli     *client.Client
 	auditor *auditor.Auditor
 }
 
 // New returns an initialized Scanner
-func New(sources []*config.IntegrationConfigLogSource, pp pipeline.Provider, a *auditor.Auditor) *Scanner {
+func New(sources []*config.LogSource, pp pipeline.Provider, a *auditor.Auditor) *Scanner {
 
-	containerSources := []*config.IntegrationConfigLogSource{}
+	containerSources := []*config.LogSource{}
 	for _, source := range sources {
-		switch source.Type {
+		switch source.Config.Type {
 		case config.DockerType:
 			containerSources = append(containerSources, source)
 		default:
@@ -58,8 +65,17 @@ func New(sources []*config.IntegrationConfigLogSource, pp pipeline.Provider, a *
 // Start starts the Scanner
 func (s *Scanner) Start() {
 	err := s.setup()
-	if err == nil {
-		go s.run()
+	if err != nil {
+		s.reportErrorToAllSources(err)
+		return
+	}
+	go s.run()
+}
+
+// reportErrorToAllSources changes the status of all sources to Error with err
+func (s *Scanner) reportErrorToAllSources(err error) {
+	for _, source := range s.sources {
+		source.Status.Error(err)
 	}
 }
 
@@ -116,18 +132,35 @@ func (s *Scanner) listContainers() []types.Container {
 	if err != nil {
 		log.Error("Can't tail containers, ", err)
 		log.Error("Is datadog-agent part of docker user group?")
+		s.reportErrorToAllSources(err)
 		return []types.Container{}
 	}
 	return containers
 }
 
-func (s *Scanner) sourceShouldMonitorContainer(source *config.IntegrationConfigLogSource, container types.Container) bool {
-	if source.Image != "" && container.Image != source.Image {
+// sourceShouldMonitorContainer returns whether a container matches a log source configuration.
+// Both image and label may be used:
+// - If the source defines an image, the container must match it exactly.
+// - If the source defines one or several labels, at least one of them must match the labels of the container.
+func (s *Scanner) sourceShouldMonitorContainer(source *config.LogSource, container types.Container) bool {
+	if source.Config.Image != "" && container.Image != source.Config.Image {
 		return false
 	}
-	if source.Label != "" {
-		_, ok := container.Labels[source.Label]
-		return ok
+	if source.Config.Label != "" {
+		// Expect a comma-separated list of labels, eg: foo:bar, baz
+		for _, value := range strings.Split(source.Config.Label, ",") {
+			// Trim whitespace, then check whether the label format is either key:value or key=value
+			label := strings.TrimSpace(value)
+			parts := strings.FieldsFunc(label, func(c rune) bool {
+				return c == ':' || c == '='
+			})
+			// If we have exactly two parts, check there is a container label that matches both.
+			// Otherwise fall back to checking the whole label exists as a key.
+			if _, exists := container.Labels[label]; exists || len(parts) == 2 && container.Labels[parts[0]] == parts[1] {
+				return true
+			}
+		}
+		return false
 	}
 	return true
 }
@@ -138,16 +171,12 @@ func (s *Scanner) setup() error {
 		return fmt.Errorf("No container source defined")
 	}
 
-	// List available containers
-
-	cli, err := client.NewEnvClient()
-	// Docker's api updates quickly and is pretty unstable, best pinpoint it
-	cli.UpdateClientVersion(dockerAPIVersion)
-	s.cli = cli
+	cli, err := s.newDockerClient()
 	if err != nil {
-		log.Error("Can't tail containers,", err)
+		log.Error("Can't tail containers, ", err)
 		return fmt.Errorf("Can't initialize client")
 	}
+	s.cli = cli
 
 	// Initialize docker utils
 	err = tagger.Init()
@@ -160,8 +189,37 @@ func (s *Scanner) setup() error {
 	return nil
 }
 
+// newDockerClient returns a new Docker client with the right API version
+func (s *Scanner) newDockerClient() (*client.Client, error) {
+	client, err := client.NewEnvClient()
+	if err != nil {
+		return nil, err
+	}
+	v, err := client.ServerVersion(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	apiVersion, err := s.computeClientAPIVersion(v.APIVersion)
+	if err != nil {
+		return nil, err
+	}
+	client.UpdateClientVersion(apiVersion)
+	return client, nil
+}
+
+// computeAPIVersion returns the version of the API that the docker client should use to be able to communicate with server
+func (s *Scanner) computeClientAPIVersion(apiVersion string) (string, error) {
+	if versions.LessThan(apiVersion, minVersion) {
+		return "", fmt.Errorf("Docker API versions prior to %s are not supported by logs-agent, the current version is %s", minVersion, apiVersion)
+	}
+	if versions.LessThan(apiVersion, maxVersion) {
+		return apiVersion, nil
+	}
+	return maxVersion, nil
+}
+
 // setupTailer sets one tailer, making it tail from the beginning or the end
-func (s *Scanner) setupTailer(cli *client.Client, container types.Container, source *config.IntegrationConfigLogSource, tailFromBeginning bool, outputChan chan message.Message) {
+func (s *Scanner) setupTailer(cli *client.Client, container types.Container, source *config.LogSource, tailFromBeginning bool, outputChan chan message.Message) {
 	log.Info("Detected container ", container.Image, " - ", s.humanReadableContainerID(container.ID))
 	t := NewDockerTailer(cli, container, source, outputChan)
 	var err error

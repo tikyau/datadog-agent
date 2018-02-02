@@ -34,6 +34,8 @@ build do
             # based on the config file
             delete "#{conf_dir}/apm.yaml.default"
             delete "#{conf_dir}/process_agent.yaml.default"
+            # load isn't supported by windows
+            delete "#{conf_dir}/load.d"
 
             # cleanup clutter
             delete "#{install_dir}/etc"
@@ -58,6 +60,9 @@ build do
             # cleanup clutter
             delete "#{install_dir}/etc"
         elsif osx?
+            # Remove linux specific configs
+            delete "#{install_dir}/etc/conf.d/file_handle.d"
+
             # Nothing to move on osx, the confs already live in /opt/datadog-agent/etc/
         end
     end

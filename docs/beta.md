@@ -30,16 +30,11 @@ ready yet. This is the list of checks that are expected to fail if run within th
 beta Agent:
 
 * agent_metrics
-* docker_daemon
-* kubernetes
-* kubernetes_state
+* docker_daemon [replaced by a new `docker` check](agent/changes.md#docker-check)
+* kubernetes [to be replaced by new checks](agent/changes.md#kubernetes-support)
 * vsphere
 
-The Docker and Kubernetes checks are being rewritten in Go to take advantage of
-the new internal architecture of the Agent, mainly bringing a consistent
-behaviour across every container related component. Therefore the Python
-versions will never work within Agent 6. The rewrite is not yet finished, but
-the new `docker` check offers [basic functionalities](changes.md#docker-check) .
+### Check API
 
 Some methods in the `AgentCheck` class are not yet implemented. These include:
 
@@ -147,6 +142,12 @@ Beta is currently available on these platforms:
 * MacOS 10.10 and above
 * Windows Server 64-bit 2008 R2 and above
 
+## Dogstatsd unix socket rights
+
+The default rights for the unix socket from
+[Dogstatsd](https://github.com/DataDog/datadog-agent/blob/e0acb0f803ec2f340e72bbb303c33a87cb21d4ce/pkg/config/config_template.yaml#L111)
+don't allow external users to send metrics to Dogstatsd. The fix will be
+available in beta10.
 
 [changes]: agent/changes.md
 [upgrade]: agent/upgrade.md

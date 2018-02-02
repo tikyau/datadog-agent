@@ -65,8 +65,8 @@ sudo apt-get install datadog-agent
 ##### Set up Datadog's Yum repo on your system
 
 ```
-[datadog]
-name = Datadog, Inc.
+[datadog-beta]
+name = Beta, Datadog, Inc.
 baseurl = https://yum.datadoghq.com/beta/x86_64/
 enabled=1
 gpgcheck=1
@@ -79,14 +79,13 @@ You can use this command to do it directly:
 
 ```shell
 # Red Hat
-echo -e '[datadog]\nname = Datadog, Inc.\nbaseurl = https://yum.datadoghq.com/beta/x86_64/\nenabled=1\ngpgcheck=1\npriority=1\ngpgkey=https://yum.datadoghq.com/DATADOG_RPM_KEY.public\n       https://yum.datadoghq.com/DATADOG_RPM_KEY_E09422B3.public' | sudo tee /etc/yum.repos.d/datadog-beta.repo
+echo -e '[datadog-beta]\nname = Beta, Datadog, Inc.\nbaseurl = https://yum.datadoghq.com/beta/x86_64/\nenabled=1\ngpgcheck=1\npriority=1\ngpgkey=https://yum.datadoghq.com/DATADOG_RPM_KEY.public\n       https://yum.datadoghq.com/DATADOG_RPM_KEY_E09422B3.public' | sudo tee /etc/yum.repos.d/datadog-beta.repo
 ```
 
 ##### Update your local yum cache and install/update the agent
 
 ```shell
 sudo yum clean expire-cache
-sudo yum check-update
 sudo yum install datadog-agent
 ```
 
@@ -106,11 +105,15 @@ As you'll see the agent 6 promotes a new directory structure with subfolders per
 
 Since we cannot guarantee all your custom checks will work on Agent 6, we'll let you enable
 these manually. Just copy them over to the `additional_checksd` location (defaults to
-`/etc/datadog-agent/checks.d/` for Agent 6:
+`/etc/datadog-agent/checks.d/` for Agent 6):
 
 ```shell
 sudo -u dd-agent -- cp /etc/dd-agent/checks.d/<check>.py /etc/datadog-agent/checks.d/
 ```
+
+**Note:** custom checks now have a *lower* precedence than the checks bundled by default with the Agent.
+This will affect your custom checks if they have the same name as a check in [integrations-core][integrations-core].
+Please read the [relevant section of the changes document][changes-custom-check] for more information.
 
 #### Restart the agent
 
@@ -146,3 +149,5 @@ Unlike on Linux, the configuration path hasn't changed and remains in `~/.datado
 Coming soon.
 
 [changes]: changes.md
+[integrations-core]: https://github.com/DataDog/integrations-core
+[changes-custom-check]: changes.md#custom-check-precedence

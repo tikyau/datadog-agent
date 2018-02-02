@@ -128,7 +128,9 @@ dependency 'jmxfetch'
 
 # External agents
 dependency 'datadog-trace-agent'
-dependency 'datadog-process-agent'  
+if not osx?
+  dependency 'datadog-process-agent'
+end
 
 if osx?
   dependency 'datadog-agent-mac-app'

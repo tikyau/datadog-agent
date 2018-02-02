@@ -18,10 +18,10 @@ import (
 )
 
 func NewTestProcessor() Processor {
-	return Processor{nil, nil, "", "", nil}
+	return Processor{nil, nil, []byte("")}
 }
 
-func buildTestConfigLogSource(ruleType, replacePlaceholder, pattern string) config.IntegrationConfigLogSource {
+func buildTestConfigLogSource(ruleType, replacePlaceholder, pattern string) config.LogSource {
 	rule := config.LogsProcessingRule{
 		Type:                    ruleType,
 		Name:                    "test",
@@ -30,10 +30,10 @@ func buildTestConfigLogSource(ruleType, replacePlaceholder, pattern string) conf
 		Pattern:                 pattern,
 		Reg:                     regexp.MustCompile(pattern),
 	}
-	return config.IntegrationConfigLogSource{ProcessingRules: []config.LogsProcessingRule{rule}, TagsPayload: []byte{'-'}}
+	return config.LogSource{Config: &config.LogsConfig{ProcessingRules: []config.LogsProcessingRule{rule}, TagsPayload: []byte{'-'}}}
 }
 
-func newNetworkMessage(content []byte, source *config.IntegrationConfigLogSource) message.Message {
+func newNetworkMessage(content []byte, source *config.LogSource) message.Message {
 	msg := message.NewNetworkMessage(content)
 	msgOrigin := message.NewOrigin()
 	msgOrigin.LogSource = source
@@ -44,9 +44,9 @@ func newNetworkMessage(content []byte, source *config.IntegrationConfigLogSource
 func TestProcessor(t *testing.T) {
 	var p *Processor
 	p = New(nil, nil, "hello", "world")
-	assert.Equal(t, "hello/world", string(p.apikeyString))
+	assert.Equal(t, []byte("hello/world"), p.apiKey)
 	p = New(nil, nil, "helloworld", "")
-	assert.Equal(t, "helloworld", string(p.apikeyString))
+	assert.Equal(t, []byte("helloworld"), p.apiKey)
 }
 
 func TestExclusion(t *testing.T) {
@@ -113,7 +113,7 @@ func TestExclusionWithInclusion(t *testing.T) {
 		Pattern: iPattern,
 		Reg:     regexp.MustCompile(iPattern),
 	}
-	source := config.IntegrationConfigLogSource{ProcessingRules: []config.LogsProcessingRule{eRule, iRule}, TagsPayload: []byte{'-'}}
+	source := config.LogSource{Config: &config.LogsConfig{ProcessingRules: []config.LogsProcessingRule{eRule, iRule}, TagsPayload: []byte{'-'}}}
 
 	shouldProcess, redactedMessage = p.applyRedactingRules(newNetworkMessage([]byte("bob@datadoghq.com"), &source))
 	assert.Equal(t, false, shouldProcess)
@@ -159,10 +159,10 @@ func TestMask(t *testing.T) {
 
 func TestTruncate(t *testing.T) {
 	p := NewTestProcessor()
-	source := config.IntegrationConfigLogSource{}
+	source := config.NewLogSource("", &config.LogsConfig{})
 	var redactedMessage []byte
 
-	_, redactedMessage = p.applyRedactingRules(newNetworkMessage([]byte("hello"), &source))
+	_, redactedMessage = p.applyRedactingRules(newNetworkMessage([]byte("hello"), source))
 	assert.Equal(t, []byte("hello"), redactedMessage)
 }
 
@@ -170,7 +170,7 @@ func TestComputeExtraContent(t *testing.T) {
 	p := NewTestProcessor()
 	var extraContent []byte
 	var extraContentParts []string
-	source := &config.IntegrationConfigLogSource{TagsPayload: []byte{'-'}}
+	source := config.NewLogSource("", &config.LogsConfig{TagsPayload: []byte{'-'}})
 
 	// message with Content only, check default values
 
@@ -198,16 +198,4 @@ func TestComputeExtraContent(t *testing.T) {
 	assert.Equal(t, "sev0", extraContentParts[0])
 	assert.Equal(t, "ts", extraContentParts[1])
 	assert.Equal(t, "tags", extraContentParts[6])
-}
-
-func TestComputeApiKeyString(t *testing.T) {
-	p := New(nil, nil, "hello", "world")
-
-	source := &config.IntegrationConfigLogSource{}
-	extraContent := p.computeAPIKeyString(newNetworkMessage(nil, source))
-	assert.Equal(t, "hello/world", string(extraContent))
-
-	source = &config.IntegrationConfigLogSource{Logset: "hi"}
-	extraContent = p.computeAPIKeyString(newNetworkMessage(nil, source))
-	assert.Equal(t, "hello/hi", string(extraContent))
 }

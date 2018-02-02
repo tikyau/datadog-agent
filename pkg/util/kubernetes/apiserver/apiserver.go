@@ -11,6 +11,8 @@ import (
 	"context"
 	"encoding/json"
 	"io/ioutil"
+	"strings"
+	"sync"
 	"time"
 
 	log "github.com/cihub/seelog"
@@ -22,22 +24,27 @@ import (
 
 	"github.com/DataDog/datadog-agent/pkg/config"
 	"github.com/DataDog/datadog-agent/pkg/tagger/collectors"
+	"github.com/DataDog/datadog-agent/pkg/util/cache"
 	"github.com/DataDog/datadog-agent/pkg/util/retry"
 )
 
 var globalApiClient *APIClient
 
 const (
-	configMapDCAToken = "configmapdcatoken"
+	configMapDCAToken = "datadogtoken"
 	defaultNamespace  = "default"
 	tokenTime         = "tokenTimestamp"
 	tokenKey          = "tokenKey"
+	servicesPollIntl  = 10 * time.Second
+	serviceMapExpire  = 5 * time.Minute
 )
 
 // ApiClient provides authenticated access to the
 // apiserver endpoints. Use the shared instance via GetApiClient.
 type APIClient struct {
-	retry.Retrier
+	// used to setup the APIClient
+	initRetry retry.Retrier
+
 	client  *k8s.Client
 	timeout time.Duration
 }
@@ -49,7 +56,7 @@ func GetAPIClient() (*APIClient, error) {
 			// TODO: make it configurable if requested
 			timeout: 5 * time.Second,
 		}
-		globalApiClient.SetupRetrier(&retry.Config{
+		globalApiClient.initRetry.SetupRetrier(&retry.Config{
 			Name:          "apiserver",
 			AttemptMethod: globalApiClient.connect,
 			Strategy:      retry.RetryCount,
@@ -57,7 +64,7 @@ func GetAPIClient() (*APIClient, error) {
 			RetryDelay:    30 * time.Second,
 		})
 	}
-	err := globalApiClient.TriggerRetry()
+	err := globalApiClient.initRetry.TriggerRetry()
 	if err != nil {
 		log.Debugf("init error: %s", err)
 		return nil, err
@@ -66,6 +73,7 @@ func GetAPIClient() (*APIClient, error) {
 }
 
 func (c *APIClient) connect() error {
+
 	if c.client == nil {
 		var err error
 		cfgPath := config.Datadog.GetString("kubernetes_kubeconfig_path")
@@ -76,12 +84,12 @@ func (c *APIClient) connect() error {
 		} else {
 			// Kubeconfig provided by conf
 			log.Debugf("using credentials from %s", cfgPath)
-			var config *k8s.Config
-			config, err = ParseKubeConfig(cfgPath)
+			var k8sconfig *k8s.Config
+			k8sconfig, err = ParseKubeConfig(cfgPath)
 			if err != nil {
 				return err
 			}
-			c.client, err = k8s.NewClient(config)
+			c.client, err = k8s.NewClient(k8sconfig)
 		}
 		if err != nil {
 			return err
@@ -92,10 +100,129 @@ func (c *APIClient) connect() error {
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
 	version, err := c.client.Discovery().Version(ctx)
-	if err == nil {
-		log.Debugf("connected to kubernetes apiserver, version %s", version.GitVersion)
+	if err != nil {
+		return err
 	}
-	return err
+
+	log.Debugf("Connected to kubernetes apiserver, version %s", version.GitVersion)
+
+	err = c.checkResourcesAuth()
+	if err != nil {
+		return err
+	}
+	log.Debug("Could successfully collect Pods, Nodes, Services and Events.")
+
+	useServiceMapper := config.Datadog.GetBool("use_service_mapper")
+	if !useServiceMapper {
+		return nil
+	}
+	c.startServiceMapping()
+	return nil
+}
+
+// ServiceMapperBundle maps the podNames to the serviceNames they are associated with.
+// It is updated by mapServices in services.go
+type ServiceMapperBundle struct {
+	PodNameToServices map[string][]string
+	m                 sync.RWMutex
+}
+
+func newServiceMapperBundle() *ServiceMapperBundle {
+	return &ServiceMapperBundle{
+		PodNameToServices: make(map[string][]string),
+	}
+}
+
+// startServiceMapping is only called once, when we have confirmed we could correctly connect to the API server.
+// The logic here is solely to retrieve Nodes, Pods and Endpoints. The processing part is in mapServices.
+func (c *APIClient) startServiceMapping() {
+	tickerSvcProcess := time.NewTicker(servicesPollIntl)
+	go func() {
+		for {
+			select {
+			case <-tickerSvcProcess.C:
+				// The timeout for the context is the same as the poll frequency.
+				// We use a new context at each run, to recover if we can't access the API server temporarily.
+				// A poll run should take less than the poll frequency.
+				ctx, cancel := context.WithTimeout(context.Background(), servicesPollIntl)
+				defer cancel()
+
+				// We fetch nodes to reliably use nodename as key in the cache. Avoiding to retrieve them from the endpoints/pods.
+				nodes, err := c.client.CoreV1().ListNodes(ctx)
+				if err != nil {
+					log.Errorf("Could not collect nodes from the API Server: %q", err.Error())
+					continue
+				}
+				endpointList, err := c.client.CoreV1().ListEndpoints(ctx, "")
+				if err != nil {
+					log.Errorf("Could not collect endpoints from the API Server: %q", err.Error())
+					continue
+				}
+				if endpointList.Items == nil {
+					log.Debug("No services collected from the API server")
+					continue
+				}
+				pods, err := c.client.CoreV1().ListPods(ctx, "")
+				if err != nil {
+					log.Errorf("Could not collect pods from the API Server: %q", err.Error())
+					continue
+				}
+
+				for _, node := range nodes.Items {
+					smb, found := cache.Cache.Get(*node.Metadata.Name)
+					if !found {
+						smb = newServiceMapperBundle()
+					}
+					err := smb.(*ServiceMapperBundle).mapServices(*node.Metadata.Name, *pods, *endpointList)
+					if err != nil {
+						log.Errorf("Could not map the services: %s on node %s", err.Error(), *node.Metadata.Name)
+						continue
+					}
+					cache.Cache.Set(*node.Metadata.Name, smb, serviceMapExpire)
+				}
+			}
+		}
+	}()
+}
+
+func aggregateCheckResourcesErrors(errorMessages []string) error {
+	if len(errorMessages) == 0 {
+		return nil
+	}
+	return fmt.Errorf("check resources failed: %s", strings.Join(errorMessages, ", "))
+}
+
+// checkResourcesAuth is meant to check that we can query resources from the API server.
+// Depending on the user's config we only trigger an error if necessary.
+// The Event check requires getting Events data.
+// The ServiceMapper case, requires access to Services, Nodes and Pods.
+func (c *APIClient) checkResourcesAuth() error {
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+	defer cancel()
+	var errorMessages []string
+
+	// We always want to collect events
+	_, err := c.client.CoreV1().ListEvents(ctx, "")
+	if err != nil {
+		errorMessages = append(errorMessages, fmt.Sprintf("event collection: %q", err.Error()))
+	}
+
+	if config.Datadog.GetBool("use_service_mapper") == false {
+		return aggregateCheckResourcesErrors(errorMessages)
+	}
+	_, err = c.client.CoreV1().ListServices(ctx, "")
+	if err != nil {
+		errorMessages = append(errorMessages, fmt.Sprintf("service collection: %q", err.Error()))
+	}
+	_, err = c.client.CoreV1().ListPods(ctx, "")
+	if err != nil {
+		errorMessages = append(errorMessages, fmt.Sprintf("pod collection: %q", err.Error()))
+	}
+	_, err = c.client.CoreV1().ListNodes(ctx)
+	if err != nil {
+		errorMessages = append(errorMessages, fmt.Sprintf("node collection: %q", err.Error()))
+	}
+	return aggregateCheckResourcesErrors(errorMessages)
 }
 
 // ParseKubeConfig reads and unmarcshals a kubeconfig file
@@ -107,9 +234,9 @@ func ParseKubeConfig(fpath string) (*k8s.Config, error) {
 		return nil, err
 	}
 
-	config := &k8s.Config{}
-	err = json.Unmarshal(jsonFile, config)
-	return config, err
+	k8sconfig := &k8s.Config{}
+	err = json.Unmarshal(jsonFile, k8sconfig)
+	return k8sconfig, err
 }
 
 // ComponentStatuses returns the component status list from the APIServer
@@ -119,7 +246,7 @@ func (c *APIClient) ComponentStatuses() (*v1.ComponentStatusList, error) {
 	return c.client.CoreV1().ListComponentStatuses(ctx)
 }
 
-// GetTokenFromConfigmap returns the value of the `tokenValue` from the `tokenKey` in the ConfigMap configMapDCAToken if its timestamp is less than tokenTimeout old.
+// GetTokenFromConfigmap returns the value of the `tokenValue` from the `tokenKey` in the ConfigMap `configMapDCAToken` if its timestamp is less than tokenTimeout old.
 func (c *APIClient) GetTokenFromConfigmap(token string, tokenTimeout int64) (string, bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()

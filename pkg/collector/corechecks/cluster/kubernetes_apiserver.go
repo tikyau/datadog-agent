@@ -2,6 +2,7 @@
 // under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2018 Datadog, Inc.
+
 // +build kubeapiserver
 
 package cluster
@@ -13,6 +14,7 @@ import (
 	"github.com/DataDog/datadog-agent/pkg/aggregator"
 	"github.com/DataDog/datadog-agent/pkg/collector/check"
 	core "github.com/DataDog/datadog-agent/pkg/collector/corechecks"
+	"github.com/DataDog/datadog-agent/pkg/config"
 	"github.com/DataDog/datadog-agent/pkg/metrics"
 	"github.com/DataDog/datadog-agent/pkg/tagger/collectors"
 	"github.com/DataDog/datadog-agent/pkg/util/kubernetes/apiserver"
@@ -46,7 +48,7 @@ type KubeASCheck struct {
 
 func (c *KubeASConfig) parse(data []byte) error {
 	// default values
-	c.CollectEvent = true
+	c.CollectEvent = config.Datadog.GetBool("collect_kubernetes_events")
 
 	return yaml.Unmarshal(data, c)
 }
@@ -81,13 +83,12 @@ func (k *KubeASCheck) Run() error {
 	componentsStatus, err := asclient.ComponentStatuses()
 	if err != nil {
 		k.Warnf("Could not retrieve the status from the control plane's components %s", err.Error())
+	} else {
+		err = k.parseComponentStatus(sender, componentsStatus)
+		if err != nil {
+			k.Warnf("Could not collect API Server component status: %s", err.Error())
+		}
 	}
-
-	err = k.parseComponentStatus(sender, componentsStatus)
-	if err != nil {
-		k.Warnf("Could not collect API Server component status: %s", err.Error())
-	}
-
 	defer sender.Commit()
 	if !k.instance.CollectEvent {
 		return nil
@@ -110,6 +111,7 @@ func (k *KubeASCheck) Run() error {
 	newEvents, modifiedEvents, versionToken, err := asclient.LatestEvents(k.latestEventToken)
 	if err != nil {
 		k.Warnf("Could not collect events from the api server: %s", err.Error())
+		return err
 	}
 
 	// We check that the resversion gotten from the API Server is more recent than the one cached in the util.

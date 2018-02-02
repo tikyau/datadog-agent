@@ -72,6 +72,7 @@ func init() {
 	Datadog.SetDefault("conf_path", ".")
 	Datadog.SetDefault("confd_path", defaultConfdPath)
 	Datadog.SetDefault("confd_dca_path", defaultDCAConfdPath)
+	Datadog.SetDefault("use_service_mapper", true)
 	Datadog.SetDefault("additional_checksd", defaultAdditionalChecksPath)
 	Datadog.SetDefault("log_level", "info")
 	Datadog.SetDefault("log_to_syslog", false)
@@ -88,6 +89,12 @@ func init() {
 	Datadog.SetDefault("enable_gohai", true)
 	Datadog.SetDefault("check_runners", int64(0))
 	Datadog.SetDefault("expvar_port", "5000")
+
+	// Use to output logs in JSON format
+	BindEnvAndSetDefault("log_format_json", false)
+
+	// IPC API server timeout
+	BindEnvAndSetDefault("server_timeout", 15)
 
 	// Use to force client side TLS version to 1.2
 	BindEnvAndSetDefault("force_tls_12", false)
@@ -119,6 +126,7 @@ func init() {
 	// Forwarder
 	Datadog.SetDefault("forwarder_timeout", 20)
 	Datadog.SetDefault("forwarder_retry_queue_max_size", 30)
+	BindEnvAndSetDefault("forwarder_num_workers", 1)
 	// Dogstatsd
 	Datadog.SetDefault("use_dogstatsd", true)
 	Datadog.SetDefault("dogstatsd_port", 8125)          // Notice: 0 means UDP port closed
@@ -130,6 +138,8 @@ func init() {
 	Datadog.SetDefault("dogstatsd_stats_buffer", 10)
 	Datadog.SetDefault("dogstatsd_expiry_seconds", 300)
 	Datadog.SetDefault("dogstatsd_origin_detection", false) // Only supported for socket traffic
+	Datadog.SetDefault("statsd_forward_host", "")
+	Datadog.SetDefault("statsd_forward_port", 0)
 	// Autoconfig
 	Datadog.SetDefault("autoconf_template_dir", "/datadog/check_configs")
 	Datadog.SetDefault("exclude_pause_container", true)
@@ -142,8 +152,20 @@ func init() {
 	Datadog.SetDefault("kubernetes_http_kubelet_port", 10255)
 	Datadog.SetDefault("kubernetes_https_kubelet_port", 10250)
 
+	Datadog.SetDefault("kubelet_tls_verify", true)
+	Datadog.SetDefault("kubelet_client_ca", "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+
+	Datadog.SetDefault("kubelet_auth_token_path", "")
+	Datadog.SetDefault("kubelet_client_crt", "")
+	Datadog.SetDefault("kubelet_client_key", "")
+
 	// Kube ApiServer
 	Datadog.SetDefault("kubernetes_kubeconfig_path", "")
+
+	// Datadog cluster agent
+	Datadog.SetDefault("cluster_agent.auth_token", "")
+	Datadog.SetDefault("cluster_agent.url", "")
+	Datadog.SetDefault("cluster_agent.kubernetes_service_name", "dca")
 
 	// ECS
 	Datadog.SetDefault("ecs_agent_url", "") // Will be autodetected
@@ -173,6 +195,7 @@ func init() {
 	Datadog.BindEnv("dd_url")
 	Datadog.BindEnv("app_key")
 	Datadog.BindEnv("hostname")
+	Datadog.BindEnv("tags")
 	Datadog.BindEnv("cmd_port")
 	Datadog.BindEnv("conf_path")
 	Datadog.BindEnv("enable_metadata_collection")
@@ -190,6 +213,11 @@ func init() {
 	Datadog.BindEnv("kubernetes_kubelet_host")
 	Datadog.BindEnv("kubernetes_http_kubelet_port")
 	Datadog.BindEnv("kubernetes_https_kubelet_port")
+	Datadog.BindEnv("kubelet_client_crt")
+	Datadog.BindEnv("kubelet_client_key")
+	Datadog.BindEnv("collect_kubernetes_events")
+
+	Datadog.BindEnv("cluster_agent.auth_token")
 
 	Datadog.BindEnv("forwarder_timeout")
 	Datadog.BindEnv("forwarder_retry_queue_max_size")
@@ -306,4 +334,17 @@ func IsContainerized() bool {
 // file used to populate the registry
 func FileUsedDir() string {
 	return filepath.Dir(Datadog.ConfigFileUsed())
+}
+
+// IsKubernetes returns whether the Agent is running on a kubernetes cluster
+func IsKubernetes() bool {
+	// Injected by Kubernetes itself
+	if os.Getenv("KUBERNETES_SERVICE_PORT") != "" {
+		return true
+	}
+	// support of Datadog environment variable for Kubernetes
+	if os.Getenv("KUBERNETES") != "" {
+		return true
+	}
+	return false
 }
