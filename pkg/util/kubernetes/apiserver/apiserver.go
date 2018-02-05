@@ -18,8 +18,8 @@ import (
 	log "github.com/cihub/seelog"
 	"github.com/ericchiang/k8s"
 
-	"github.com/ericchiang/k8s/api/v1"
 	"fmt"
+	"github.com/ericchiang/k8s/api/v1"
 
 	"github.com/DataDog/datadog-agent/pkg/config"
 	"github.com/DataDog/datadog-agent/pkg/tagger/collectors"
