@@ -56,7 +56,8 @@ func FromAgentConfig(agentConfig Config) error {
 	}
 
 	// TODO: exclude_process_args
-	// TODO: histogram_aggregates
+	config.Datadog.Set("histogram_aggregates", buildHistogramAggregates(agentConfig))
+
 	// TODO: histogram_percentiles
 
 	if agentConfig["service_discovery_backend"] == "docker" {
@@ -216,4 +217,34 @@ func buildConfigProviders(agentConfig Config) ([]config.ConfigurationProviders, 
 	}
 
 	return []config.ConfigurationProviders{cp}, nil
+}
+
+func buildHistogramAggregates(agentConfig Config) []string {
+	configValue := agentConfig["histogram_aggregates"]
+
+	var histogramBuild []string
+	var result []string
+	validValues := [6]string{"min", "max", "median", "avg", "sum", "count"}
+
+	if configValue == "" {
+		// this is expected, not an error
+		return nil
+	}
+
+	result = strings.Split(configValue, ", ")
+	for i := 0; i < len(result); i++ {
+		found := false
+		for j := 0; j < len(validValues); j++ {
+			if result[i] == validValues[j] {
+				histogramBuild = append(histogramBuild, result[i])
+				found = true
+			}
+		}
+		if !found {
+			// print the value skipped because invalid value
+			fmt.Println("warning: ignored histogram aggregate", result[i], "is invalid")
+		}
+	}
+
+	return histogramBuild
 }
