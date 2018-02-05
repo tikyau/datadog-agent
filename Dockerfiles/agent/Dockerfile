@@ -63,7 +63,7 @@ RUN tar xfz s6.tgz && rm s6.tgz
 
 # Service definitions to start the agents
 COPY s6-services  /etc/services.d/
-COPY entrypoint/* /etc/cont-init.d/
+COPY entrypoint /etc/cont-init.d/
 
 # Prepare for running without root
 RUN adduser --group dd-agent \
@@ -75,11 +75,8 @@ RUN adduser --group dd-agent \
 # Expose DogStatsD and trace-agent ports
 EXPOSE 8125/udp 8126/tcp
 
-# Extra conf.d and checks.d
-VOLUME ["/conf.d", "/checks.d"]
-
 # Placeholder healthcheck, to be improved
 HEALTHCHECK --interval=5m --timeout=20s --retries=1 \
   CMD ["/opt/datadog-agent/bin/agent/agent", "status"]
 
-ENTRYPOINT ["/init"]
+CMD ["/init"]
