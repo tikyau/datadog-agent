@@ -111,8 +111,8 @@ func (t *Tailer) tailFrom(offset int64, whence int) error {
 	t.source.AddInput(t.path)
 
 	t.decoder.Start()
-	go t.readForever()
 	go t.forwardMessages()
+	go t.readForever()
 
 	return nil
 }
