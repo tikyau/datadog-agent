@@ -19,8 +19,6 @@ import (
 	"github.com/ericchiang/k8s"
 
 	"github.com/ericchiang/k8s/api/v1"
-	metav1 "github.com/ericchiang/k8s/apis/meta/v1"
-
 	"fmt"
 
 	"github.com/DataDog/datadog-agent/pkg/config"
@@ -230,7 +228,7 @@ func (c *APIClient) checkResourcesAuth() error {
 	if err != nil {
 		errorMessages = append(errorMessages, fmt.Sprintf("service collection: %q", err.Error()))
 	}
-	_, err = c.client.CoreV1().ListPods(ctx, "", metav1.ListOptions{})
+	_, err = c.client.CoreV1().ListPods(ctx, "")
 	if err != nil {
 		errorMessages = append(errorMessages, fmt.Sprintf("pod collection: %q", err.Error()))
 	}
