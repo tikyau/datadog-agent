@@ -36,8 +36,7 @@ RUN dpkg -x /datadog-agent*_amd64.deb . \
 COPY datadog*.yaml etc/datadog-agent/
 RUN mv etc/datadog-agent/conf.d/docker.d/conf.yaml.example etc/datadog-agent/conf.d/docker.d/conf.yaml.default
 
-COPY entrypoint.sh .
-
+#############################################################
 
 FROM debian:stretch-slim
 LABEL maintainer "Datadog <package@datadoghq.com>"
@@ -64,6 +63,7 @@ RUN tar xfz s6.tgz && rm s6.tgz
 
 # Service definitions to start the agents
 COPY s6-services  /etc/services.d/
+COPY entrypoint/* /etc/cont-init.d/
 
 # Prepare for running without root
 RUN adduser --group dd-agent \
@@ -82,5 +82,4 @@ VOLUME ["/conf.d", "/checks.d"]
 HEALTHCHECK --interval=5m --timeout=20s --retries=1 \
   CMD ["/opt/datadog-agent/bin/agent/agent", "status"]
 
-CMD ["/init"]
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/init"]
