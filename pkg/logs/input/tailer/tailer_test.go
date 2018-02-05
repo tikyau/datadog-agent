@@ -51,9 +51,10 @@ func (suite *TailerTestSuite) SetupTest() {
 	suite.tl = NewTailer(suite.outputChan, suite.source, suite.testPath, sleepDuration)
 }
 
-func (suite *TailerTestSuite) TestTailerIdentifier() {
-	suite.tl.tailFromBeginning()
-	suite.Equal(fmt.Sprintf("file:%s/tailer.log", suite.testDir), suite.tl.Identifier())
+func (suite *TailerTestSuite) TearDownTest() {
+	suite.tl.Stop()
+	suite.testFile.Close()
+	os.Remove(suite.testDir)
 }
 
 func (suite *TailerTestSuite) TestTailFromBeginning() {
@@ -120,10 +121,9 @@ func (suite *TailerTestSuite) TestRecoverTailing() {
 	suite.Equal(len(lines[0])+len(lines[1])+len(lines[2]), int(suite.tl.GetReadOffset()))
 }
 
-func TestTailerIdentifier(t *testing.T) {
-	testPath := "tailer.log"
-	tl := NewTailer(nil, nil, testPath, time.Millisecond)
-	suite.Equal("file:tailer.log", tl.Identifier())
+func (suite *TailerTestSuite) TestTailerIdentifier() {
+	suite.tl.tailFromBeginning()
+	suite.Equal(fmt.Sprintf("file:%s/tailer.log", suite.testDir), suite.tl.Identifier())
 }
 
 func TestTailerTestSuite(t *testing.T) {
