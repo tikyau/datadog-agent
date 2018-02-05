@@ -37,7 +37,7 @@ fi
 # Install default datadog.yaml
 if [[ "${KUBERNETES}" ]]; then
     ln -s /etc/datadog-agent/datadog-kubernetes.yaml /etc/datadog-agent/datadog.yaml
-elif [ $ECS ]; then
+elif [ $ECS_FARGATE ]; then
     ln -s /etc/datadog-agent/datadog-ecs.yaml /etc/datadog-agent/datadog.yaml
     find /etc/datadog-agent/conf.d/ -iname "*.yaml.default" -delete # remove all default checks (no host)
 else
