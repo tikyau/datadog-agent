@@ -19,6 +19,7 @@ import (
 	"github.com/ericchiang/k8s"
 
 	"github.com/ericchiang/k8s/api/v1"
+	metav1 "github.com/ericchiang/k8s/apis/meta/v1"
 
 	"fmt"
 
@@ -229,7 +230,7 @@ func (c *APIClient) checkResourcesAuth() error {
 	if err != nil {
 		errorMessages = append(errorMessages, fmt.Sprintf("service collection: %q", err.Error()))
 	}
-	_, err = c.client.CoreV1().ListPods(ctx, "")
+	_, err = c.client.CoreV1().ListPods(ctx, "", metav1.ListOptions{})
 	if err != nil {
 		errorMessages = append(errorMessages, fmt.Sprintf("pod collection: %q", err.Error()))
 	}

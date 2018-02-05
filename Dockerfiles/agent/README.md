@@ -117,7 +117,7 @@ You will need to give the agent some rights to activate this feature. See the [R
 A ConfigMap can be used to store the `event.tokenKey` and the `event.tokenTimestamp`. It has to be deployed in the `default` namespace and be named `datadogtoken`.
 One can simply run `kubectl create configmap datadogtoken --from-literal="event.tokenKey"="0"` . You can also use the example in manifests/datadog_configmap.yaml.
 
-When the ConfigMap is used, if the agent in charge (via the [Leader election](#leader-election)) of collecting the events dies, the next leader elected will use the ConfigMap to identify the last events pulled. 
+When the ConfigMap is used, if the agent in charge (via the [Leader election](#leader-election)) of collecting the events dies, the next leader elected will use the ConfigMap to identify the last events pulled.
 This is in order to avoid duplicate the events collected, as well as putting less stress on the API Server.
 
 #### Leader Election
@@ -142,7 +142,7 @@ You will need to allow the agent to be allowed to perform a few actions:
 
 - `get` and `update` of the `Configmaps` named `datadogtoken` to update and query the most up to date version token corresponding to the latest event stored in ETCD.
 - `list` and `watch` of the `Events` to pull the events from the API Server, format and submit them.
-- `get`, `update` and `create` for the `Endpoint` named `datadog-leader-election` for the [Leader election](#leader-election) feature.
+- `get`, `update` and `create` for the `Endpoint`. The Endpoint used by the agent for the [Leader election](#leader-election) feature is named `datadog-leader-election`.
 - `list` the `componentstatuses` resource, in order to submit service checks for the Controle Plane's components status.
 
 You can find the templates in manifests/rbac.
